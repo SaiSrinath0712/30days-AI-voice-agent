@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Day 14 - Conversational AI Voice Agent</title>
+<style>
+  body {
+    margin: 0;
+    padding: 30px 40px;
+    min-height: 100vh;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #023047;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    background: url('https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1470&q=80') no-repeat center center fixed;
+    background-size: cover;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-color: rgba(2, 48, 71, 0.75);
+    z-index: -1;
+  }
+  .card {
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 16px rgb(0 0 0 / 0.3), inset 0 0 200px 25px rgba(0, 128, 128, 0.3);
+    border-radius: 15px;
+    padding: 25px 30px;
+    width: 360px;
+    color: white;
+  }
+  h2 { color: #00b4d8; text-align: center; }
+  #record-btn {
+    cursor: pointer;
+    background: linear-gradient(135deg, #007991 0%, #00c6ff 100%);
+    border: none;
+    color: white;
+    padding: 14px 0;
+    border-radius: 12px;
+    width: 100%;
+    font-size: 1.1em;
+    font-weight: bold;
+    margin-bottom: 12px;
+    transition: background 0.3s ease;
+  }
+  #record-btn.recording {
+    background: linear-gradient(135deg, #ff006e 0%, #ff7b00 100%);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 0, 110, 0.6); }
+    70% { box-shadow: 0 0 0 10px rgba(255, 0, 110, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 0, 110, 0); }
+  }
+  #rec-status { color: #fff; text-align: center; margin-bottom: 10px; }
+  #ai-text {
+    background: rgba(255,255,255,0.85);
+    color: #023047;
+    border-radius: 10px;
+    padding: 10px;
+    margin-top: 8px;
+    font-style: italic;
+    min-height: 60px;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h2>Voice Q&A</h2>
+    <button id="record-btn">🎙️ Start Recording</button>
+    <div id="rec-status">Ready</div>
+    <audio id="ai-audio" style="display:none;"></audio>
+    <div id="ai-text"></div>
+  </div>
+
+<script>
+  // Get session_id from query string or default
+  function getSessionId() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('session_id') || 'default';
+  }
+
+  let mediaRecorder = null;
+  let chunks = [];
+  let isRecording = false;
+
+  const recordBtn = document.getElementById("record-btn");
+  const statusEl = document.getElementById("rec-status");
+  const audioEl = document.getElementById("ai-audio");
+  const aiTextEl = document.getElementById("ai-text");
+
+  recordBtn.onclick = async () => {
+    if (!isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+
+        chunks = [];
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        mediaRecorder.onstart = () => {
+          isRecording = true;
+          recordBtn.textContent = "⏹ Stop Recording";
+          recordBtn.classList.add("recording");
+          statusEl.textContent = "Recording...";
+          aiTextEl.textContent = "";
+          audioEl.style.display = "none";
+          audioEl.pause();
+          audioEl.src = "";
+        };
+
+        mediaRecorder.onstop = async () => {
+          statusEl.textContent = "Processing...";
+          const blob = new Blob(chunks, { type: "audio/wav" });
+          const form = new FormData();
+          form.append("file", blob, "audio.wav");
+
+          const sessionId = getSessionId();
+
+          try {
+            const response = await fetch(`/agent/chat/${sessionId}`, {
+              method: "POST",
+              body: form,
+            });
+
+            if (!response.ok) {
+              let errMsg = "Unknown error";
+              try {
+                const errData = await response.json();
+                errMsg = errData.detail || JSON.stringify(errData);
+              } catch {}
+              throw new Error(errMsg);
+            }
+
+            const data = await response.json();
+
+            if (data.audio_url) {
+              aiTextEl.textContent = data.llm_text || "";
+              audioEl.src = data.audio_url;
+              audioEl.style.display = "block";
+              audioEl.autoplay = true;
+
+              audioEl.onended = () => {
+                statusEl.textContent = "Reply finished. Ready.";
+                // Uncomment below for auto restart recording after reply
+                // recordBtn.click();
+              };
+
+              statusEl.textContent = "Reply received.";
+            } else {
+              throw new Error("Invalid response from server");
+            }
+
+          } catch (err) {
+            statusEl.textContent = "Failed.";
+            aiTextEl.textContent = "Error: " + err.message;
+          }
+        };
+
+        mediaRecorder.start();
+
+      } catch (err) {
+        statusEl.textContent = "Mic error: " + err.message;
+      }
+    } else {
+      mediaRecorder.stop();
+      isRecording = false;
+      recordBtn.textContent = "🎙️ Start Recording";
+      recordBtn.classList.remove("recording");
+      statusEl.textContent = "Processing...";
+    }
+  };
+</script>
+</body>
+</html>
